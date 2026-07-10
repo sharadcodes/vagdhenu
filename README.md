@@ -54,6 +54,7 @@ Includes an embedded web UI, Docker image, and a one-shot deploy script.
 | GET | `/api/health` | `{"status":"ok","model_loaded":true,"meters":18}` |
 | GET | `/api/meters` | List of available chandas meters |
 | POST | `/api/chant` | JSON in → MP3 bytes (`audio/mpeg`) |
+| POST | `/api/chant/json` | JSON in → JSON envelope (base64 MP3 + metadata) |
 
 ### One-shot deploy (Docker)
 

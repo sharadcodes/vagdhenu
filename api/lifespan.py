@@ -84,8 +84,8 @@ def get_renderer():
             from huggingface_hub import hf_hub_download
 
             repo = os.environ.get("VAGDHENU_HF", "prathoshap/vagdhenu")
-            voice = hf_hub_download(repo, os.environ.get("VAGDHENU_VOICE_FILE", "voice_steer_ema_2026-06-17.pt"))
-            voc = hf_hub_download(repo, os.environ.get("VAGDHENU_VOC_FILE", "voc_bigvgan_EMA_2026-06-11.pth"))
+            voice = hf_hub_download(repo, "voice_steer_ema_2026-06-17.pt")
+            voc = hf_hub_download(repo, "voc_bigvgan_EMA_2026-06-11.pth")
         _renderer = Renderer(voice, voc, BANK_PATH, device="cuda", vocab_file=VOCAB_PATH)
     return _renderer
 

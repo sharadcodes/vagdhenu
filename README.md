@@ -54,7 +54,6 @@ Includes an embedded web UI, Docker image, and a one-shot deploy script.
 | GET | `/api/health` | `{"status":"ok","model_loaded":true,"meters":18}` |
 | GET | `/api/meters` | List of available chandas meters |
 | POST | `/api/chant` | JSON in → MP3 bytes (`audio/mpeg`) |
-| POST | `/api/chant/json` | JSON in → JSON envelope (base64 MP3 + metadata) |
 
 ### One-shot deploy (Docker)
 
@@ -83,29 +82,6 @@ docker compose logs -f           # watch logs
 docker compose down              # stop
 ```
 
-### Run without Docker (local dev)
-
-```bash
-bash scripts/setup.sh
-uv sync
-uv run uvicorn api.app:app --host 0.0.0.0 --port 8000
-```
-
-### API usage
-
-```bash
-# Chant → MP3 file
-curl -X POST http://localhost:8000/api/chant \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"वसुदेवसुतं देवं कंसचाणूरमर्दनम् ।\nदेवकीपरमानन्दं कृष्णं वन्दे जगद्गुरुम् ॥","seed":60}' \
-  --output chant.mp3
-
-# Chant → JSON envelope (base64 MP3 + metadata)
-curl -X POST http://localhost:8000/api/chant/json \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"वसुदेवसुतं देवं कंसचाणूरमर्दनम्","seed":60}'
-```
-
 ### Environment variables
 
 All have sensible defaults — only override if needed. See `.env.example`.
@@ -115,7 +91,6 @@ All have sensible defaults — only override if needed. See `.env.example`.
 | `VAGDHENU_HF` | `prathoshap/vagdhenu` | Hugging Face repo for weight download |
 | `VAGDHENU_VOICE` | `models/voice_steer_ema_2026-06-17.pt` | Path to the DiT voice checkpoint |
 | `VAGDHENU_VOC` | `models/voc_bigvgan_EMA_2026-06-11.pth` | Path to the BigVGAN vocoder checkpoint |
-| `VAGDHENU_LAZY` | `0` | `0` = warm model at boot (~60s), `1` = lazy-load on first request |
 
 ## Case studies
 - **MBTN** (Mahābhārata Tātparya Nirṇaya) — 32-adhyāya *video* deliverable (Devanagari + Kannada karaoke, tanpura), shipped.

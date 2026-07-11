@@ -113,6 +113,9 @@ run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { ec
 
 # ── 4. install Python deps ────────────────────────────────────────────────────
 echo "[4/6] Installing Python deps (torch cu121 + requirements + API)…"
+# Colab runs Python 3.12; upgrade setuptools first so pkg_resources doesn't
+# reference the removed pkgutil.ImpImporter (used by jieba/f5_tts).
+run "pip install -q --upgrade setuptools"
 # Colab pre-installs a newer torch/torchvision stack. Strip it first so pip
 # cannot keep the wrong version behind, then install the validated cu121 stack.
 run "pip uninstall -y torch torchvision torchaudio 2>/dev/null || true"

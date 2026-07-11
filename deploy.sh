@@ -103,7 +103,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  COLAB PATH — native install (no Docker), cloudflared tunnel for external access
+#  COLAB PATH — native install via uv venv (no Docker), cloudflared tunnel
 # ═══════════════════════════════════════════════════════════════════════════════
 if [ "$COLAB" = true ]; then
 
@@ -111,31 +111,26 @@ if [ "$COLAB" = true ]; then
 echo "[3/6] Checking GPU…"
 run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { echo 'ERROR: no GPU detected — enable GPU runtime in Colab'; exit 1; }"
 
-# ── 4. install Python deps ────────────────────────────────────────────────────
-echo "[4/6] Installing Python deps (torch cu121 + requirements + API)…"
-# Colab runs Python 3.12; upgrade setuptools first so pkg_resources doesn't
-# reference the removed pkgutil.ImpImporter (used by jieba/f5_tts).
-run "pip install -q --upgrade setuptools"
-# Colab pre-installs a newer torch/torchvision stack. Strip it first so pip
-# cannot keep the wrong version behind, then install the validated cu121 stack.
-run "pip uninstall -y torch torchvision torchaudio 2>/dev/null || true"
-run "pip install -q torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
-run "pip install -q -r $DEST/requirements.txt"
-# requirements.txt can upgrade torch transitively (e.g. x-transformers). Remove
-# the upgraded stack and reinstall the validated version to guarantee CUDA 12.1.
-run "pip uninstall -y torch torchvision torchaudio 2>/dev/null || true"
-run "pip install -q torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
-# Verify torch version before proceeding.
-run "python -c 'import torch; assert torch.__version__.startswith(\"2.4.1\"), f\"torch {torch.__version__} != 2.4.1\"; print(\"torch\", torch.__version__, \"CUDA\", torch.version.cuda)'"
-run "pip install -q fastapi uvicorn[standard] pydub python-multipart jinja2"
+# ── 4. install Python deps via uv venv ────────────────────────────────────────
+echo "[4/6] Installing Python deps via uv (fast, isolated venv)…"
+run "pip install -q uv"
+run "cd $DEST && uv venv"
+run "cd $DEST && uv pip install -r requirements.txt"
+# requirements.txt can upgrade torch transitively (x-transformers pins torch>=2.5).
+# Reinstall the validated CUDA 12.1 stack on top. Include torchvision so
+# transformers' image utils don't crash when imported by f5_tts.
+run "cd $DEST && uv pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121 --reinstall-package torch --reinstall-package torchvision --reinstall-package torchaudio"
+run "cd $DEST && uv pip install fastapi uvicorn[standard] pydub python-multipart jinja2"
+# Sanity check: the venv must see torch 2.4.1 + CUDA 12.1.
+run "cd $DEST && .venv/bin/python -c 'import torch; assert torch.__version__.startswith(\"2.4.1\"), f\"torch {torch.__version__} != 2.4.1\"; print(\"torch\", torch.__version__, \"CUDA\", torch.version.cuda)'"
 
 # ── 5. clone BigVGAN + download weights + launch uvicorn ──────────────────────
 echo "[5/6] Setting up BigVGAN + weights + launching server…"
 run "[ -d $DEST/BigVGAN/.git ] || git clone --depth 1 https://github.com/NVIDIA/BigVGAN.git $DEST/BigVGAN"
-run "cd $DEST && python scripts/download_weights.py"
+run "cd $DEST && .venv/bin/python scripts/download_weights.py"
 # Kill any stale uvicorn on port 8000, then start fresh in background.
 run "pkill -f 'uvicorn api.app:app' 2>/dev/null || true"
-run "cd $DEST && PYTHONPATH=\"$(python -c 'import site; print(site.getsitepackages()[0])'):$DEST/BigVGAN\" nohup python -m uvicorn api.app:app --host 0.0.0.0 --port 8000 > /tmp/vagdhenu-uvicorn.log 2>&1 &"
+run "cd $DEST && PYTHONPATH=\"$DEST/BigVGAN\" nohup .venv/bin/python -m uvicorn api.app:app --host 0.0.0.0 --port 8000 > /tmp/vagdhenu-uvicorn.log 2>&1 &"
 
 # ── 6. start cloudflared tunnel + wait for health ─────────────────────────────
 echo "[6/6] Starting tunnel + waiting for model warm-up…"

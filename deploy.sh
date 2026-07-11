@@ -114,7 +114,7 @@ run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { ec
 # ── 4. install Python deps via uv venv ────────────────────────────────────────
 echo "[4/6] Installing Python deps via uv (fast, isolated venv)…"
 run "pip install -q uv"
-run "cd $DEST && uv venv"
+run "cd $DEST && uv venv --no-managed-python"
 run "cd $DEST && uv pip install --python .venv/bin/python -r requirements.txt"
 # requirements.txt can upgrade torch transitively (x-transformers pins torch>=2.5).
 # Reinstall the validated CUDA 12.1 stack on top. Include torchvision so

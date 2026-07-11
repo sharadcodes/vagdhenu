@@ -119,14 +119,6 @@ async def _synthesize(req: ChantRequest, request: Request):
     text = (req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is empty")
-    msg = L.limits_validate(text)
-    if msg:
-        raise HTTPException(status_code=400, detail=msg)
-    if not L.limits_count(L.limits_ip(request)):
-        raise HTTPException(
-            status_code=429,
-            detail=f"Daily limit of {L.limits.DAILY_LIMIT} chants reached for this network.",
-        )
 
     # Meter resolution
     if not req.meter or req.meter == L._AUTO:

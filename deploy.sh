@@ -4,14 +4,16 @@
 #  Clones the repo, injects the FastAPI REST API + Docker setup, builds & launches.
 #
 #  USAGE:
-#    bash deploy.sh                          # deploys to this machine (localhost)
+#    bash deploy.sh                          # deploys to this machine (localhost, Docker)
+#    bash deploy.sh --colab                  # deploys on Google Colab (native, no Docker)
 #    bash deploy.sh user@host                # deploys over SSH (key-based auth)
 #    bash deploy.sh user@host -i key.pem     # deploys over SSH with a specific key
 #
 #  PREREQS on the target:
 #    - NVIDIA GPU + driver ≥ 525 (CUDA 12.1 compatible)
-#    - Docker + Docker Compose v2 + nvidia-container-toolkit
+#    - Docker + Docker Compose v2 + nvidia-container-toolkit  (not needed for --colab)
 #    - (if remote) SSH key-based auth for the target user
+#    - (if --colab) Google Colab with GPU runtime (T4/L4/A100)
 #
 #  After deploy:
 #    Web UI:  http://<host>:8000
@@ -26,12 +28,21 @@ set -euo pipefail
 SSH_TARGET=""
 SSH_KEY=""
 REMOTE=""
-for arg in "$@"; do
-  case "$arg" in
-    -i) shift; SSH_KEY="-i $1" ;;
-    *)  SSH_TARGET="$arg" ;;
+COLAB=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --colab) COLAB=true ;;
+    -i) shift; [ $# -gt 0 ] && SSH_KEY="-i $1" || { echo "ERROR: -i requires a key path" >&2; exit 2; } ;;
+    -i*) SSH_KEY="-i ${1#-i}" ;;
+    *)  SSH_TARGET="$1" ;;
   esac
+  shift
 done
+# --colab implies local execution (no SSH to Colab).
+if [ "$COLAB" = true ] && [ -n "$SSH_TARGET" ]; then
+  echo "WARNING: --colab ignores SSH target (Colab is always local)" >&2
+  SSH_TARGET=""
+fi
 if [ -n "$SSH_TARGET" ]; then
   REMOTE="ssh $SSH_KEY -o StrictHostKeyChecking=no $SSH_TARGET"
 fi
@@ -39,7 +50,14 @@ fi
 # ── paths (this script lives in the repo root alongside api/, Dockerfile, …) ──
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_URL="https://github.com/prathoshap/vagdhenu.git"
+# Default deploy destination (used for remote SSH or fresh local clone).
 DEST="~/vagdhenu"
+# If running locally and the script is already inside a git repo, deploy
+# in-place instead of re-cloning to a hardcoded path. This makes
+# "git clone … && cd vagdhenu && bash deploy.sh" work from any directory.
+if [ -z "$REMOTE" ] && [ -d "$SCRIPT_DIR/.git" ]; then
+  DEST="$SCRIPT_DIR"
+fi
 
 run() { if [ -n "$REMOTE" ]; then $REMOTE "$1"; else eval "$1"; fi; }
 copy() {
@@ -54,7 +72,11 @@ copy() {
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║  Vāgdhenu — Sanskrit Chant TTS · one-shot deploy             ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
-echo "Target: ${SSH_TARGET:-localhost}"
+if [ "$COLAB" = true ]; then
+  echo "Target: Google Colab (native, no Docker)"
+else
+  echo "Target: ${SSH_TARGET:-localhost}"
+fi
 echo ""
 
 # ── 1. clone / update the repo ────────────────────────────────────────────────
@@ -69,7 +91,7 @@ echo "[2/6] Injecting API + Docker files…"
 _in_repo=false
 if [ -z "$REMOTE" ]; then
   real_script="$(cd "$SCRIPT_DIR" && pwd)"
-  real_dest="$(eval cd "$DEST" && pwd 2>/dev/null)" || real_dest=""
+  real_dest="$(eval cd "$DEST" 2>/dev/null && pwd)" || real_dest=""
   if [ "$real_script" = "$real_dest" ]; then _in_repo=true; fi
 fi
 if [ "$_in_repo" = true ]; then
@@ -79,6 +101,82 @@ else
     if [ -e "$SCRIPT_DIR/$f" ]; then copy "$SCRIPT_DIR/$f" "$DEST/"; fi
   done
 fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  COLAB PATH — native install (no Docker), cloudflared tunnel for external access
+# ═══════════════════════════════════════════════════════════════════════════════
+if [ "$COLAB" = true ]; then
+
+# ── 3. check GPU ──────────────────────────────────────────────────────────────
+echo "[3/6] Checking GPU…"
+run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { echo 'ERROR: no GPU detected — enable GPU runtime in Colab'; exit 1; }"
+
+# ── 4. install Python deps ────────────────────────────────────────────────────
+echo "[4/6] Installing Python deps (torch cu121 + requirements + API)…"
+run "pip install -q torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
+run "pip install -q -r $DEST/requirements.txt"
+run "pip install -q fastapi uvicorn[standard] pydub python-multipart jinja2"
+
+# ── 5. clone BigVGAN + download weights + launch uvicorn ──────────────────────
+echo "[5/6] Setting up BigVGAN + weights + launching server…"
+run "[ -d $DEST/BigVGAN/.git ] || git clone --depth 1 https://github.com/NVIDIA/BigVGAN.git $DEST/BigVGAN"
+run "cd $DEST && python scripts/download_weights.py"
+# Kill any stale uvicorn on port 8000, then start fresh in background.
+run "pkill -f 'uvicorn api.app:app' 2>/dev/null || true"
+run "cd $DEST && PYTHONPATH=\"$DEST/BigVGAN\" nohup python -m uvicorn api.app:app --host 0.0.0.0 --port 8000 > /tmp/vagdhenu-uvicorn.log 2>&1 &"
+
+# ── 6. start cloudflared tunnel + wait for health ─────────────────────────────
+echo "[6/6] Starting tunnel + waiting for model warm-up…"
+# Install cloudflared if missing (no auth needed for quick tunnels).
+run "command -v cloudflared >/dev/null 2>&1 || { wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared; }"
+# Start tunnel in background.
+run "pkill -f 'cloudflared tunnel' 2>/dev/null || true"
+run "nohup cloudflared tunnel --url http://localhost:8000 > /tmp/vagdhenu-tunnel.log 2>&1 &"
+# Wait for the tunnel URL to appear in the log.
+TUNNEL_URL=""
+run "for i in \$(seq 1 30); do
+  TUNNEL_URL=\$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/vagdhenu-tunnel.log 2>/dev/null | head -1)
+  if [ -n \"\$TUNNEL_URL\" ]; then break; fi
+  sleep 2
+done
+echo \"TUNNEL=\$TUNNEL_URL\"
+"
+# Extract the URL from the tunnel log (guarded — grep exits 1 if no match yet).
+TUNNEL_URL="$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/vagdhenu-tunnel.log 2>/dev/null | head -1 || true)"
+if [ -z "$TUNNEL_URL" ]; then
+  echo "WARNING: tunnel URL not captured — check /tmp/vagdhenu-tunnel.log"
+  TUNNEL_URL="http://localhost:8000"
+fi
+# Wait for the API to respond.
+run "for i in \$(seq 1 60); do
+  if curl -fsS http://localhost:8000/api/health >/dev/null 2>&1; then echo '✓ healthy'; break; fi
+  printf '.'
+  sleep 5
+done
+echo ''
+"
+
+# ── done (Colab) ──────────────────────────────────────────────────────────────
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  ✓ Deploy complete (Colab)                                   ║"
+echo "║                                                              ║"
+echo "║  Web UI:   $TUNNEL_URL"
+echo "║  Health:   GET  $TUNNEL_URL/api/health"
+echo "║  Meters:   GET  $TUNNEL_URL/api/meters"
+echo "║  Chant:    POST $TUNNEL_URL/api/chant  (→ MP3)"
+echo "║  Chant:    POST $TUNNEL_URL/api/chant/json (→ JSON)"
+echo "║                                                              ║"
+echo "║  Logs:     cat /tmp/vagdhenu-uvicorn.log                     ║"
+echo "║  Tunnel:   cat /tmp/vagdhenu-tunnel.log                      ║"
+echo "║  Stop:     pkill -f 'uvicorn api.app' ; pkill -f cloudflared ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+exit 0
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DOCKER PATH — build image, launch container, wait for health
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # ── 3. check GPU + Docker on target ───────────────────────────────────────────
 echo "[3/6] Checking GPU + Docker…"
@@ -107,7 +205,7 @@ echo ''
 docker compose -f $DEST/docker-compose.yml ps
 "
 
-# ── done ──────────────────────────────────────────────────────────────────────
+# ── done (Docker) ─────────────────────────────────────────────────────────────
 HOST="${SSH_TARGET#*@}"
 HOST="${HOST%% *}"
 if [ -z "$SSH_TARGET" ]; then HOST="localhost"; fi
@@ -121,8 +219,8 @@ echo "║  Meters:   GET  http://$HOST:8000/api/meters                 ║"
 echo "║  Chant:    POST http://$HOST:8000/api/chant  (→ MP3)         ║"
 echo "║  Chant:    POST http://$HOST:8000/api/chant/json (→ JSON)    ║"
 echo "║                                                              ║"
-echo "║  Logs:     docker compose -f ~/vagdhenu/docker-compose.yml   ║"
+echo "║  Logs:     docker compose -f $DEST/docker-compose.yml        ║"
 echo "║            logs -f                                           ║"
-echo "║  Stop:     docker compose -f ~/vagdhenu/docker-compose.yml   ║"
+echo "║  Stop:     docker compose -f $DEST/docker-compose.yml        ║"
 echo "║            down                                              ║"
 echo "╚══════════════════════════════════════════════════════════════╝"

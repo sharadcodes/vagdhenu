@@ -130,7 +130,7 @@ run "[ -d $DEST/BigVGAN/.git ] || git clone --depth 1 https://github.com/NVIDIA/
 run "cd $DEST && .venv/bin/python scripts/download_weights.py"
 # Kill any stale uvicorn on port 8000, then start fresh in background.
 run "pkill -f 'uvicorn api.app:app' 2>/dev/null || true"
-run "cd $DEST && PYTHONPATH=\"$DEST/BigVGAN\" nohup .venv/bin/python -m uvicorn api.app:app --host 0.0.0.0 --port 8000 > /tmp/vagdhenu-uvicorn.log 2>&1 &"
+run "cd $DEST && MPLBACKEND=agg PYTHONPATH=\"$DEST/BigVGAN\" nohup .venv/bin/python -m uvicorn api.app:app --host 0.0.0.0 --port 8000 > /tmp/vagdhenu-uvicorn.log 2>&1 &"
 
 # ── 6. start cloudflared tunnel + wait for health ─────────────────────────────
 echo "[6/6] Starting tunnel + waiting for model warm-up…"

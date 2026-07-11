@@ -113,11 +113,17 @@ run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { ec
 
 # ── 4. install Python deps ────────────────────────────────────────────────────
 echo "[4/6] Installing Python deps (torch cu121 + requirements + API)…"
-# Colab pre-installs a newer torchvision. Install the matching torch stack first.
+# Colab pre-installs a newer torch/torchvision stack. Strip it first so pip
+# cannot keep the wrong version behind, then install the validated cu121 stack.
+run "pip uninstall -y torch torchvision torchaudio 2>/dev/null || true"
 run "pip install -q torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
 run "pip install -q -r $DEST/requirements.txt"
-# requirements.txt may upgrade torch transitively (x-transformers). Force the validated stack back.
-run "pip install -q --no-deps --force-reinstall torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
+# requirements.txt can upgrade torch transitively (e.g. x-transformers). Remove
+# the upgraded stack and reinstall the validated version to guarantee CUDA 12.1.
+run "pip uninstall -y torch torchvision torchaudio 2>/dev/null || true"
+run "pip install -q torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
+# Verify torch version before proceeding.
+run "python -c 'import torch; assert torch.__version__.startswith(\"2.4.1\"), f\"torch {torch.__version__} != 2.4.1\"; print(\"torch\", torch.__version__, \"CUDA\", torch.version.cuda)'"
 run "pip install -q fastapi uvicorn[standard] pydub python-multipart jinja2"
 
 # ── 5. clone BigVGAN + download weights + launch uvicorn ──────────────────────

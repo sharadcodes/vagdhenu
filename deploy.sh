@@ -132,41 +132,27 @@ run "cd $DEST && .venv/bin/python scripts/download_weights.py"
 run "pkill -f 'uvicorn api.app:app' 2>/dev/null || true"
 run "cd $DEST && MPLBACKEND=agg PYTHONPATH=\"$DEST/BigVGAN\" nohup .venv/bin/python -m uvicorn api.app:app --host 0.0.0.0 --port 8000 > /tmp/vagdhenu-uvicorn.log 2>&1 &"
 
-# ── 6. start cloudflared tunnel + wait for health ─────────────────────────────
-echo "[6/6] Starting tunnel + waiting for model warm-up…"
+# ── 6. start cloudflared tunnel (non-blocking) ────────────────────────────────
+echo "[6/6] Starting tunnel…"
 # Install cloudflared if missing (no auth needed for quick tunnels).
 run "command -v cloudflared >/dev/null 2>&1 || { wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared; }"
 # Start tunnel in background.
 run "pkill -f 'cloudflared tunnel' 2>/dev/null || true"
 run "nohup cloudflared tunnel --url http://localhost:8000 > /tmp/vagdhenu-tunnel.log 2>&1 &"
-# Wait for the tunnel URL to appear in the log.
-TUNNEL_URL=""
-run "for i in \$(seq 1 30); do
-  TUNNEL_URL=\$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/vagdhenu-tunnel.log 2>/dev/null | head -1)
-  if [ -n \"\$TUNNEL_URL\" ]; then break; fi
-  sleep 2
-done
-echo \"TUNNEL=\$TUNNEL_URL\"
-"
-# Extract the URL from the tunnel log (guarded — grep exits 1 if no match yet).
+# Give cloudflared a few seconds to register the URL, then capture it.
+run "sleep 8"
 TUNNEL_URL="$(grep -o 'https://[^ ]*\.trycloudflare\.com' /tmp/vagdhenu-tunnel.log 2>/dev/null | head -1 || true)"
 if [ -z "$TUNNEL_URL" ]; then
-  echo "WARNING: tunnel URL not captured — check /tmp/vagdhenu-tunnel.log"
   TUNNEL_URL="http://localhost:8000"
 fi
-# Wait for the API to respond.
-run "for i in \$(seq 1 60); do
-  if curl -fsS http://localhost:8000/api/health >/dev/null 2>&1; then echo '✓ healthy'; break; fi
-  printf '.'
-  sleep 5
-done
-echo ''
-"
 
 # ── done (Colab) ──────────────────────────────────────────────────────────────
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  ✓ Deploy complete (Colab)                                   ║"
+echo "║  ✓ Deploy started (Colab)                                    ║"
+echo "║                                                              ║"
+echo "║  The server + tunnel are running in the background.          ║"
+echo "║  Model warm-up takes ~60-120s on first request.              ║"
 echo "║                                                              ║"
 echo "║  Web UI:   $TUNNEL_URL"
 echo "║  Health:   GET  $TUNNEL_URL/api/health"
@@ -174,6 +160,7 @@ echo "║  Meters:   GET  $TUNNEL_URL/api/meters"
 echo "║  Chant:    POST $TUNNEL_URL/api/chant  (→ MP3)"
 echo "║  Chant:    POST $TUNNEL_URL/api/chant/json (→ JSON)"
 echo "║                                                              ║"
+echo "║  Check:    curl -s http://localhost:8000/api/health          ║"
 echo "║  Logs:     cat /tmp/vagdhenu-uvicorn.log                     ║"
 echo "║  Tunnel:   cat /tmp/vagdhenu-tunnel.log                      ║"
 echo "║  Stop:     pkill -f 'uvicorn api.app' ; pkill -f cloudflared ║"

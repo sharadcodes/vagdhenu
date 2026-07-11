@@ -115,12 +115,12 @@ run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { ec
 echo "[4/6] Installing Python deps via uv (fast, isolated venv)…"
 run "pip install -q uv"
 run "cd $DEST && uv venv"
-run "cd $DEST && uv pip install -r requirements.txt"
+run "cd $DEST && uv pip install --python .venv/bin/python -r requirements.txt"
 # requirements.txt can upgrade torch transitively (x-transformers pins torch>=2.5).
 # Reinstall the validated CUDA 12.1 stack on top. Include torchvision so
 # transformers' image utils don't crash when imported by f5_tts.
-run "cd $DEST && uv pip install torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121 --reinstall-package torch --reinstall-package torchvision --reinstall-package torchaudio"
-run "cd $DEST && uv pip install fastapi uvicorn[standard] pydub python-multipart jinja2"
+run "cd $DEST && uv pip install --python .venv/bin/python torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121 --reinstall-package torch --reinstall-package torchvision --reinstall-package torchaudio"
+run "cd $DEST && uv pip install --python .venv/bin/python fastapi uvicorn[standard] pydub python-multipart jinja2"
 # Sanity check: the venv must see torch 2.4.1 + CUDA 12.1.
 run "cd $DEST && .venv/bin/python -c 'import torch; assert torch.__version__.startswith(\"2.4.1\"), f\"torch {torch.__version__} != 2.4.1\"; print(\"torch\", torch.__version__, \"CUDA\", torch.version.cuda)'"
 

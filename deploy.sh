@@ -113,8 +113,11 @@ run "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || { ec
 
 # ── 4. install Python deps ────────────────────────────────────────────────────
 echo "[4/6] Installing Python deps (torch cu121 + requirements + API)…"
-run "pip install -q torch==2.4.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
+# Colab pre-installs a newer torchvision. Install the matching torch stack first.
+run "pip install -q torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
 run "pip install -q -r $DEST/requirements.txt"
+# requirements.txt may upgrade torch transitively (x-transformers). Force the validated stack back.
+run "pip install -q --no-deps --force-reinstall torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121"
 run "pip install -q fastapi uvicorn[standard] pydub python-multipart jinja2"
 
 # ── 5. clone BigVGAN + download weights + launch uvicorn ──────────────────────
